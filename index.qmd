@@ -26,7 +26,7 @@ key-points:
 date: last-modified
 bibliography: references.bib
 citation:
-  container-title: Earth and Space Science
+  container-title: Spheroid Analysis
 number-sections: true
 format: 
   html:
@@ -37,7 +37,7 @@ format:
 
 In the First email Rahul send he wrote:
 
-```
+```         
 For my project, I am also interested in conducting the sequencing and would be grateful to have your expertise. I am currently working with vascularized spheroids and have two experimental conditions:
 
 a) Control Vascularized spheroids 
@@ -51,80 +51,109 @@ Each sample contain 300 vascularized spheroids (roughly a million cells per samp
 I would like to know whether sequencing of these samples is feasible for you and your schedule. Do let me know which month/date could be the most suitable for you to receive the samples (depending on your schedule).
 ```
 
-So, we have a 3x3 experimental design for two conditions. 
+So, we have a 3x3 experimental design for two conditions.
 
+In a followed up mail a few weeks later he asked for:
 
+```         
+Fastq files are available. https://datashare.biochem.mpg.de/s/NMy4gBMQYzwTth1
+Could you please help me with this? 
 
+I would require for now 
+1) The PCA graph
+2) The volcano plot 
+3) gene ontology graph
 
-
-
-
-
-
-
-
-```{r}
-eruptions <- c(1492, 1585, 1646, 1677, 1712, 1949, 1971, 2021)
-n_eruptions <- length(eruptions)
+Could you also provide me the excel sheet with the final gene expression values? 
+Eagerly waiting for the results. 
 ```
 
-```{r}
-#| label: fig-timeline
-#| fig-cap: Timeline of recent earthquakes on La Palma
-#| fig-alt: An event plot of the years of the last 8 eruptions on La Palma.
-#| fig-height: 1.5
-#| fig-width: 6
-par(mar = c(3, 1, 1, 1) + 0.1)
-plot(eruptions, rep(0, n_eruptions), 
-  pch = "|", axes = FALSE)
-axis(1)
-box()
+# Preparation
+
+The raw data is saved on the pool folder `pool-bcfngs` and was linked to my working folder.
+
+```{bash rawData}
+#| echo: true
+#| eval: false
+mkdir -p /fs/home/yeroslaviz/projects/MPI_MR/Rahul/P708/rawData
+cd rawData/
+ln -s /home/yeroslaviz/poolFolders/pool-bcfngs/fastq_files/P708/P708_20230808_Spatz_Rahul/conc.fastq/*. .
 ```
 
-```{r}
-#| output: false
-avg_years_between_eruptions <- mean(diff(eruptions[-n_eruptions]))
-avg_years_between_eruptions
+# Quality Control
+
+Quality control was done using the `fastqc` tool [@fastqc, v. 0.11.7] within the automated sequencing pipeline. QC looks good for all samples.
+
+generating a report using `multiQC` [@multiqc, v. 1.14] summarizing the QC Results.
+
+```{bash}
+#| echo: true
+#| eval: false
+conda activate Mapping
+
+mkdir ../fastqcResults
+cd  ../
+fastqc -t 22 -o fastqcResults/ rawData/*.gz
+
+multiqc -o QC /fs/home/yeroslaviz/projects/MPI_MR/Rahul/P708/fastqcResults/
 ```
 
-Based on data up to and including 1971, eruptions on La Palma happen every `r round(avg_years_between_eruptions, 1)` years on average.
+## Mapping
 
-Studies of the magma systems feeding the volcano, such as @marrero2019, have proposed that there are two main magma reservoirs feeding the Cumbre Vieja volcano; one in the mantle (30-40km depth) which charges and in turn feeds a shallower crustal reservoir (10-20km depth).
+Mapping the samples was done using the STAR Aligner [@star, v. 2.7.10b]
 
-Eight eruptions have been recorded since the late 1400s (@fig-timeline).
+```{bash star}
+#| echo: true
+#| eval: false
+#| 
+basisDir="/fs/home/yeroslaviz/projects/MPI_MR/Rahul/P708"
+rawData="${basisDir}/rawData"
+output="${basisDir}/STAR_mapping"
+mkdir -p $output
+starIndex="/home/yeroslaviz/poolFolders/pool-bcfngs/genomes/Hsp.GRCh38/starIndex2.7.10a"
+gtf="/home/yeroslaviz/poolFolders/pool-bcfngs/genomes/Hsp.GRCh38.gtf"
 
-Data and methods are discussed in @sec-data-methods.
+for file in `ls $rawData/*R1.fastq.gz`
+do
+    base=$(echo $file | sed -E "s/\/fs\/home\/yeroslaviz\/projects\/MPI_MR\/Rahul\/P708\/rawData\/(.*).conc.R1.fastq.gz/\1/")
+    echo -e "\n Mapping $base \n"
+    mkdir -p ${output}/$base/
+#    echo ${base}
+    STAR --runThreadN 20 --genomeDir $starIndex --sjdbGTFfile $gtf --sjdbOverhang 100 \
+    --readFilesCommand zcat \
+    --readFilesIn ${rawData}/$base.conc.R1.fastq.gz ${rawData}/$base.conc.R2.fastq.gz \
+    --outFileNamePrefix ${output}/$base/ \
+    --quantMode TranscriptomeSAM GeneCounts \
+    --outSAMtype BAM SortedByCoordinate
+    mv ${output}/${base}/Aligned.sortedByCoord.out.bam ${output}/${base}.sorted.bam
+    samtools index ${output}/$base.sorted.bam
+    rm -rf ${output}/${base}/_STAR*
+done
 
-Let $x$ denote the number of eruptions in a year. Then, $x$ can be modeled by a Poisson distribution
+conda deactivate
+```
 
-$$
-p(x) = \frac{e^{-\lambda} \lambda^{x}}{x !}
-$$ {#eq-poisson}
-
-where $\lambda$ is the rate of eruptions per year. Using @eq-poisson, the probability of an eruption in the next $t$ years can be calculated.
-
-| Name                 | Year   |
-| -------------------- | ------ |
-| Current              | 2021   |
-| Teneguía             | 1971   |
-| Nambroque            | 1949   |
-| El Charco            | 1712   |
-| Volcán San Antonio   | 1677   |
-| Volcán San Martin    | 1646   |
-| Tajuya near El Paso  | 1585   |
-| Montaña Quemada      | 1492   |
-
-: Recent historic eruptions on La Palma {#tbl-history}
-
-@tbl-history summarises the eruptions recorded since the colonization of the islands by Europeans in the late 1400s.
-
-![Map of La Palma](images/la-palma-map.png){#fig-map}
-
-La Palma is one of the west most islands in the Volcanic Archipelago of the Canary Islands (@fig-map). 
-
-{{< embed notebooks/explore-earthquakes.qmd#fig-spatial-plot >}}
-
-@fig-spatial-plot shows the location of recent Earthquakes on La Palma.
+| Sample Name    | \# read counts | \# uniq Mapped | \% uniq Mapped | \# Multi-Mapped | \% Multi-Mapped | TotalMapped |
+|-----------|-----------|-----------|-----------|-----------|-----------|-----------|
+| control_r1_1   | 14934832       | 13903988       | 93.10%         | 764217          | 5.117%          | 98.217%     |
+| control_r1_2   | 16851257       | 15957162       | 94.69%         | 652037          | 3.869%          | 98.559%     |
+| control_r1_3   | 17756996       | 16893231       | 95.14%         | 680413          | 3.832%          | 98.972%     |
+| control_r2_1   | 19058058       | 18107861       | 95.01%         | 778372          | 4.084%          | 99.094%     |
+| control_r2_2   | 17399089       | 16502506       | 94.85%         | 700218          | 4.024%          | 98.874%     |
+| control_r2_3   | 9044369        | 8510562        | 94.10%         | 369782          | 4.089%          | 98.189%     |
+| control_r3_1   | 20002695       | 19052374       | 95.25%         | 715315          | 3.576%          | 98.826%     |
+| control_r3_2   | 14401432       | 13746894       | 95.46%         | 503051          | 3.493%          | 98.953%     |
+| control_r3_3   | 23793484       | 22452657       | 94.36%         | 884989          | 3.719%          | 98.079%     |
+| microgels_r1_1 | 14394900       | 13739503       | 95.45%         | 530096          | 3.683%          | 99.133%     |
+| microgels_r1_2 | 19167758       | 18295504       | 95.45%         | 705631          | 3.681%          | 99.131%     |
+| microgels_r1_3 | 17222387       | 16408266       | 95.27%         | 650330          | 3.776%          | 99.046%     |
+| microgels_r2_1 | 18897903       | 18021886       | 95.36%         | 722859          | 3.825%          | 99.185%     |
+| microgels_r2_2 | 14837465       | 14155321       | 95.40%         | 553967          | 3.734%          | 99.134%     |
+| microgels_r2_3 | 14117159       | 13446885       | 95.25%         | 542432          | 3.842%          | 99.092%     |
+| microgels_r3_1 | 17627394       | 16817864       | 95.41%         | 673610          | 3.821%          | 99.231%     |
+| microgels_r3_2 | 14383836       | 13711139       | 95.32%         | 530871          | 3.691%          | 99.011%     |
+| microgels_r3_3 | 12048255       | 11495761       | 95.41%         | 453869          | 3.767%          | 99.177%     |
+|                |                |                |                |                 |                 |             |
 
 ## Data & Methods {#sec-data-methods}
 
@@ -132,6 +161,5 @@ La Palma is one of the west most islands in the Volcanic Archipelago of the Cana
 
 ## References {.unnumbered}
 
-:::{#refs}
-
+::: {#refs}
 :::
